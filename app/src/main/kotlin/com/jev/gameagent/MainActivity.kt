@@ -180,7 +180,7 @@ fun AgentSetupScreen(onLaunch: () -> Unit) {
 
         Button(
             onClick = onLaunch,
-            enabled = apiKey.isNotBlank() && hasOverlayPermission,
+            enabled = hasOverlayPermission && endpoint.isNotBlank(),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E676)),
             modifier = Modifier
                 .fillMaxWidth()

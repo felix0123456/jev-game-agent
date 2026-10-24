@@ -19,7 +19,7 @@ class JevApiClient(context: Context) {
         private const val PREFS_NAME = "jev_settings"
         private const val KEY_API_KEY = "jev_api_key"
         private const val KEY_ENDPOINT = "jev_endpoint"
-        private const val DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
+        private const val DEFAULT_ENDPOINT = "https://jev.felixresch.com/v1/systemone"
     }
 
     private val prefs: SharedPreferences =
@@ -44,19 +44,19 @@ class JevApiClient(context: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val token = apiKey
-                if (token.isBlank()) {
-                    return@withContext Result.failure(IllegalStateException("Jev API Key is not configured."))
-                }
-
                 val jsonBody = gson.toJson(request)
                 val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
 
-                val httpRequest = Request.Builder()
+                val requestBuilder = Request.Builder()
                     .url(endpoint)
-                    .addHeader("Authorization", "Bearer $token")
                     .addHeader("Content-Type", "application/json")
                     .post(body)
-                    .build()
+
+                if (token.isNotBlank()) {
+                    requestBuilder.addHeader("Authorization", "Bearer $token")
+                }
+
+                val httpRequest = requestBuilder.build()
 
                 client.newCall(httpRequest).execute().use { response ->
                     val responseString = response.body?.string() ?: ""
