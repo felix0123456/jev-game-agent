@@ -120,7 +120,7 @@ fun AgentSetupScreen(onLaunch: () -> Unit) {
             modifier = Modifier.padding(top = 2.dp)
         ) {
             Text(
-                text = "● Build 7 · OpenJEV Authenticated",
+                text = "● Version ${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
                 color = Color(0xFF00E676),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,

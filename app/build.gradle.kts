@@ -3,6 +3,9 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
+val buildNum = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 10
+val buildName = "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "10")
+
 android {
     namespace = "com.jev.gameagent"
     compileSdk = 34
@@ -11,8 +14,8 @@ android {
         applicationId = "com.jev.gameagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = buildNum
+        versionName = buildName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -38,6 +41,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"

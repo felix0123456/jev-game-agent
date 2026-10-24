@@ -34,11 +34,26 @@ class JevApiClient(context: Context) {
         .build()
 
     var apiKey: String
-        get() = prefs.getString(KEY_API_KEY, DEFAULT_API_KEY) ?: DEFAULT_API_KEY
+        get() {
+            val key = prefs.getString(KEY_API_KEY, "") ?: ""
+            if (key.isBlank() || key == "jev_live_...") {
+                prefs.edit().putString(KEY_API_KEY, DEFAULT_API_KEY).apply()
+                return DEFAULT_API_KEY
+            }
+            return key
+        }
         set(value) = prefs.edit().putString(KEY_API_KEY, value.trim()).apply()
 
     var endpoint: String
-        get() = prefs.getString(KEY_ENDPOINT, DEFAULT_ENDPOINT) ?: DEFAULT_ENDPOINT
+        get() {
+            val saved = prefs.getString(KEY_ENDPOINT, "") ?: ""
+            // Automatically migrate from old TypeSafe AI endpoint to our Coolify OpenJEV instance
+            if (saved.isBlank() || saved.contains("api.typesafe.ai")) {
+                prefs.edit().putString(KEY_ENDPOINT, DEFAULT_ENDPOINT).apply()
+                return DEFAULT_ENDPOINT
+            }
+            return saved
+        }
         set(value) = prefs.edit().putString(KEY_ENDPOINT, value.trim()).apply()
 
     suspend fun decide(request: JevDecisionRequest): Result<JevDecisionResponse> =
