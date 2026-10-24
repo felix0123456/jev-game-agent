@@ -48,12 +48,21 @@ async def evaluate_decision(req: DecisionRequest, authorization: Optional[str] =
     TOTAL_REQUESTS += 1
     
     expected_api_key = os.getenv("OPENJEV_API_KEY", "").strip()
-    if expected_api_key:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Bearer token required")
-        token = authorization.split("Bearer ", 1)[1].strip()
-        if token != expected_api_key:
-            raise HTTPException(status_code=403, detail="Invalid API key")
+    if not expected_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Server security error: OPENJEV_API_KEY environment variable is not configured."
+        )
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required: Missing or malformed 'Authorization: Bearer <token>' header."
+        )
+
+    token = authorization.split("Bearer ", 1)[1].strip()
+    if token != expected_api_key:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid token.")
 
     result = await engine.decide(req.state, req.questions, req.model or "openjev-latest")
     LAST_LATENCY = result.get("latency_ms", 0)

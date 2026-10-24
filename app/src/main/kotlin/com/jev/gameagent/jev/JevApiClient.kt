@@ -19,6 +19,7 @@ class JevApiClient(context: Context) {
         private const val PREFS_NAME = "jev_settings"
         private const val KEY_API_KEY = "jev_api_key"
         private const val KEY_ENDPOINT = "jev_endpoint"
+        private const val DEFAULT_API_KEY = "jev_live_e7e7966519d5b30e6c895c563579565620bf946d1720e5ad"
         private const val DEFAULT_ENDPOINT = "https://jev.felixresch.com/v1/systemone"
     }
 
@@ -33,7 +34,7 @@ class JevApiClient(context: Context) {
         .build()
 
     var apiKey: String
-        get() = prefs.getString(KEY_API_KEY, "") ?: ""
+        get() = prefs.getString(KEY_API_KEY, DEFAULT_API_KEY) ?: DEFAULT_API_KEY
         set(value) = prefs.edit().putString(KEY_API_KEY, value.trim()).apply()
 
     var endpoint: String
