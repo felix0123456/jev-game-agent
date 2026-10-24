@@ -114,7 +114,21 @@ fun AgentSetupScreen(onLaunch: () -> Unit) {
             color = Color.Gray
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF1E3A2F),
+            modifier = Modifier.padding(top = 2.dp)
+        ) {
+            Text(
+                text = "● Build 7 · OpenJEV Authenticated",
+                color = Color(0xFF00E676),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
 
         // API Key Section
         OutlinedTextField(
