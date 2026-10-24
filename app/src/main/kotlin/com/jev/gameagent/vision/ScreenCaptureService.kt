@@ -15,7 +15,9 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
@@ -122,50 +124,71 @@ class ScreenCaptureService : Service() {
     }
 
     private fun initMediaProjection(resultCode: Int, data: Intent) {
-        val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = mpManager.getMediaProjection(resultCode, data)
+        try {
+            val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = mpManager.getMediaProjection(resultCode, data)
 
-        val captureWidth = screenWidth / 2
-        val captureHeight = screenHeight / 2
-
-        imageReader = ImageReader.newInstance(
-            captureWidth,
-            captureHeight,
-            PixelFormat.RGBA_8888,
-            2
-        )
-
-        imageReader?.setOnImageAvailableListener({ reader ->
-            var image: Image? = null
-            try {
-                image = reader.acquireLatestImage()
-                if (image != null) {
-                    val bitmap = imageToBitmap(image)
-                    if (bitmap != null) {
-                        JevApplication.instance.coordinator.onNewScreenFrame(
-                            bitmap,
-                            screenWidth,
-                            screenHeight
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error processing frame in ImageReader", e)
-            } finally {
-                image?.close()
+            if (mediaProjection == null) {
+                Log.e(TAG, "MediaProjection was null")
+                return
             }
-        }, null)
 
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "JevGameDisplay",
-            captureWidth,
-            captureHeight,
-            screenDensity,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface,
-            null,
-            null
-        )
+            // CRITICAL FOR ANDROID 14 (API 34+):
+            // Android 14 throws SecurityException / IllegalStateException if createVirtualDisplay
+            // is called without a registered callback.
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    super.onStop()
+                    Log.d(TAG, "MediaProjection stopped by system")
+                    stopCapture()
+                }
+            }, Handler(Looper.getMainLooper()))
+
+            val captureWidth = screenWidth / 2
+            val captureHeight = screenHeight / 2
+
+            imageReader = ImageReader.newInstance(
+                captureWidth,
+                captureHeight,
+                PixelFormat.RGBA_8888,
+                2
+            )
+
+            imageReader?.setOnImageAvailableListener({ reader ->
+                var image: Image? = null
+                try {
+                    image = reader.acquireLatestImage()
+                    if (image != null) {
+                        val bitmap = imageToBitmap(image)
+                        if (bitmap != null) {
+                            JevApplication.instance.coordinator.onNewScreenFrame(
+                                bitmap,
+                                screenWidth,
+                                screenHeight
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing frame in ImageReader", e)
+                } finally {
+                    image?.close()
+                }
+            }, null)
+
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
+                "JevGameDisplay",
+                captureWidth,
+                captureHeight,
+                screenDensity,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader?.surface,
+                null,
+                null
+            )
+            Log.i(TAG, "MediaProjection and VirtualDisplay successfully initialized ($captureWidth x $captureHeight)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Fatal error initializing MediaProjection virtual display", e)
+        }
     }
 
     private fun imageToBitmap(image: Image): Bitmap? {

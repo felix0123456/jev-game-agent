@@ -1,15 +1,15 @@
 package com.jev.gameagent.overlay
 
-import android.app.Notification
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.*
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
+import android.util.Log
 import android.view.*
 import android.widget.*
-import androidx.core.app.NotificationCompat
 import com.jev.gameagent.JevApplication
 import com.jev.gameagent.core.AgentCoordinator
 import com.jev.gameagent.core.AgentState
@@ -19,15 +19,11 @@ import com.jev.gameagent.jev.ScreenRect
 class FloatingOverlayService : Service(), AgentStateListener {
 
     companion object {
-        private const val NOTIFICATION_ID = 1002
+        private const val TAG = "FloatingOverlayService"
 
         fun start(context: Context) {
             val intent = Intent(context, FloatingOverlayService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startService(intent)
         }
 
         fun stop(context: Context) {
@@ -52,24 +48,19 @@ class FloatingOverlayService : Service(), AgentStateListener {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         coordinator.setListener(this)
 
-        startForegroundNotification()
-        createBubbleView()
-        createHudOverlayView()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            Log.w(TAG, "SYSTEM_ALERT_WINDOW permission not granted; cannot display floating HUD")
+            return
+        }
+
+        try {
+            createBubbleView()
+            createHudOverlayView()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed creating overlay views", e)
+        }
     }
 
-    private fun startForegroundNotification() {
-        val notification: Notification = NotificationCompat.Builder(
-            this,
-            JevApplication.CHANNEL_ID_OVERLAY
-        )
-            .setContentTitle("Jev Game Autopilot")
-            .setContentText("Floating controls active")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-
-        startForeground(NOTIFICATION_ID, notification)
-    }
 
     private fun createBubbleView() {
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -156,7 +147,11 @@ class FloatingOverlayService : Service(), AgentStateListener {
         })
 
         bubbleView = container
-        windowManager.addView(container, params)
+        try {
+            windowManager.addView(container, params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add floating bubble view", e)
+        }
     }
 
     private fun createHudOverlayView() {
@@ -203,7 +198,11 @@ class FloatingOverlayService : Service(), AgentStateListener {
         }
 
         hudOverlayView = hudView
-        windowManager.addView(hudView, params)
+        try {
+            windowManager.addView(hudView, params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add HUD overlay view", e)
+        }
     }
 
     private fun showObjectiveInputDialog() {

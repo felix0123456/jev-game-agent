@@ -27,6 +27,8 @@ import com.jev.gameagent.input.AccessibilityTouchService
 import com.jev.gameagent.overlay.FloatingOverlayService
 import com.jev.gameagent.vision.ScreenCaptureService
 
+import android.util.Log
+
 class MainActivity : ComponentActivity() {
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
@@ -35,10 +37,15 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            ScreenCaptureService.start(this, result.resultCode, result.data!!)
-            FloatingOverlayService.start(this)
-            Toast.makeText(this, "Jev Game Agent activated! Open your game.", Toast.LENGTH_LONG).show()
-            finish() // Minimize to background so user can play
+            try {
+                ScreenCaptureService.start(this, result.resultCode, result.data!!)
+                FloatingOverlayService.start(this)
+                Toast.makeText(this, "Jev Game Agent activated! Open your game.", Toast.LENGTH_LONG).show()
+                finish() // Minimize to background so user can play
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to start agent services", e)
+                Toast.makeText(this, "Error starting agent: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            }
         } else {
             Toast.makeText(this, "Screen capture permission is required for vision.", Toast.LENGTH_SHORT).show()
         }
@@ -126,6 +133,58 @@ fun AgentSetupScreen(onLaunch: () -> Unit) {
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
             )
+        }
+
+        var crashLog by remember { mutableStateOf(JevApplication.getCrashLog(context)) }
+
+        if (crashLog != null) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF331414)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "⚠️ Previous Crash Report Captured",
+                        color = Color(0xFFFF5252),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = crashLog!!.take(280) + if (crashLog!!.length > 280) "..." else "",
+                        color = Color(0xFFE0E0E0),
+                        fontSize = 11.sp,
+                        maxLines = 4
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                val clip = android.content.ClipData.newPlainText("Jev Crash Log", crashLog)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "Crash log copied to clipboard!", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD50000)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Copy Log", fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                JevApplication.clearCrashLog(context)
+                                crashLog = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Dismiss", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(6.dp))
