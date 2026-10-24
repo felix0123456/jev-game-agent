@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Jev Game Agent</string>
+    <string name="accessibility_service_description">Enables Jev Game Agent to automatically tap and swipe on the screen to accomplish the user’s designated game objective.</string>
+</resources>
