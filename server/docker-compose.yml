@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  openjev:
+    build: .
+    container_name: openjev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - OPENJEV_API_KEY=${OPENJEV_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
