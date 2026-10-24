@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.*
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.*
@@ -15,6 +17,10 @@ import com.jev.gameagent.core.AgentCoordinator
 import com.jev.gameagent.core.AgentState
 import com.jev.gameagent.core.AgentStateListener
 import com.jev.gameagent.jev.ScreenRect
+import com.jev.gameagent.preset.ExecutionPolicy
+import com.jev.gameagent.preset.GoalPreset
+import com.jev.gameagent.preset.PolicyType
+import com.jev.gameagent.vision.ScreenCaptureService
 
 class FloatingOverlayService : Service(), AgentStateListener {
 
@@ -31,12 +37,15 @@ class FloatingOverlayService : Service(), AgentStateListener {
         }
     }
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var windowManager: WindowManager
     private var bubbleView: View? = null
     private var hudOverlayView: View? = null
     private var activeRect: ScreenRect? = null
     private var activeConfidence: Float = 0f
     private var activeLatencyMs: Long = 0L
+
+    private var statusTextView: TextView? = null
 
     private val coordinator: AgentCoordinator
         get() = JevApplication.instance.coordinator
@@ -61,7 +70,6 @@ class FloatingOverlayService : Service(), AgentStateListener {
         }
     }
 
-
     private fun createBubbleView() {
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -78,21 +86,93 @@ class FloatingOverlayService : Service(), AgentStateListener {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 50
-            y = 200
+            x = 30
+            y = 150
         }
 
         val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(14, 10, 14, 10)
+            setBackgroundColor(Color.parseColor("#EE181818"))
+        }
+
+        // Top Row: Brand & Status Summary + Close ✕ button
+        val topRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(16, 12, 16, 12)
-            setBackgroundColor(Color.parseColor("#E6212121"))
+            gravity = Gravity.CENTER_VERTICAL
         }
 
         val icon = TextView(this).apply {
             text = "⚡ JEV"
             setTextColor(Color.parseColor("#00E676"))
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 8, 0)
+        }
+
+        val status = TextView(this).apply {
+            text = "Ready (Tap GOAL/PRESET)"
+            setTextColor(Color.LTGRAY)
+            textSize = 11f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        statusTextView = status
+
+        val closeBtn = TextView(this).apply {
+            text = " ✕ "
+            setTextColor(Color.parseColor("#FF5252"))
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
+            setPadding(12, 0, 4, 0)
+            setOnClickListener {
+                Log.i(TAG, "User tapped close ✕ on HUD")
+                ScreenCaptureService.stopAll(this@FloatingOverlayService)
+            }
+        }
+
+        topRow.addView(icon)
+        topRow.addView(status, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        topRow.addView(closeBtn)
+
+        // Bottom Row: Mini Controls (⏮, ⏭, GOAL, STOP)
+        val controlRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 0)
+        }
+
+        val prevBtn = Button(this).apply {
+            text = "⏮"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#37474F"))
+            textSize = 11f
+            setPadding(12, 4, 12, 4)
+            setOnClickListener {
+                coordinator.prevStep()
+            }
+        }
+
+        val skipBtn = Button(this).apply {
+            text = "⏭"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#37474F"))
+            textSize = 11f
+            setPadding(12, 4, 12, 4)
+            setOnClickListener {
+                coordinator.skipStep()
+            }
+        }
+
+        val goalBtn = Button(this).apply {
+            text = "PRESET"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#2979FF"))
+            textSize = 11f
+            setPadding(14, 4, 14, 4)
+            setOnClickListener {
+                showObjectiveInputDialog()
+            }
         }
 
         val stopBtn = Button(this).apply {
@@ -100,26 +180,21 @@ class FloatingOverlayService : Service(), AgentStateListener {
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#D50000"))
             textSize = 11f
+            setPadding(14, 4, 14, 4)
             setOnClickListener {
                 coordinator.stopObjective("User pressed floating STOP")
             }
         }
 
-        val startBtn = Button(this).apply {
-            text = "GOAL"
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#2979FF"))
-            textSize = 11f
-            setOnClickListener {
-                showObjectiveInputDialog()
-            }
-        }
+        controlRow.addView(prevBtn)
+        controlRow.addView(skipBtn)
+        controlRow.addView(goalBtn)
+        controlRow.addView(stopBtn)
 
-        container.addView(icon)
-        container.addView(startBtn)
-        container.addView(stopBtn)
+        container.addView(topRow)
+        container.addView(controlRow)
 
-        // Make draggable
+        // Draggable touch listener
         container.setOnTouchListener(object : View.OnTouchListener {
             private var initialX = 0
             private var initialY = 0
@@ -138,7 +213,9 @@ class FloatingOverlayService : Service(), AgentStateListener {
                     MotionEvent.ACTION_MOVE -> {
                         params.x = initialX + (event.rawX - initialTouchX).toInt()
                         params.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager.updateViewLayout(container, params)
+                        try {
+                            windowManager.updateViewLayout(container, params)
+                        } catch (e: Exception) {}
                         return true
                     }
                 }
@@ -182,7 +259,7 @@ class FloatingOverlayService : Service(), AgentStateListener {
 
             private val textPaint = Paint().apply {
                 color = Color.WHITE
-                textSize = 34f
+                textSize = 32f
                 setShadowLayer(4f, 2f, 2f, Color.BLACK)
                 isAntiAlias = true
             }
@@ -226,55 +303,86 @@ class FloatingOverlayService : Service(), AgentStateListener {
 
         val dialogContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 40, 40, 40)
-            setBackgroundColor(Color.parseColor("#1E1E1E"))
+            setPadding(36, 36, 36, 36)
+            setBackgroundColor(Color.parseColor("#212121"))
         }
 
         val title = TextView(this).apply {
-            text = "Enter Game Objective"
+            text = "Select Goal Sequence / Preset"
             setTextColor(Color.WHITE)
-            textSize = 18f
+            textSize = 17f
             setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 16)
+        }
+
+        val presets = JevApplication.instance.presetRepository.getPresets()
+        val presetListContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        var dialogView: View? = null
+
+        for (preset in presets) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(20, 16, 20, 16)
+                setBackgroundColor(Color.parseColor("#2C2C2C"))
+                val lp = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                lp.setMargins(0, 0, 0, 12)
+                layoutParams = lp
+            }
+
+            val pTitle = TextView(this).apply {
+                text = "▶ ${preset.name} (${preset.steps.size} steps)"
+                setTextColor(Color.parseColor("#00E676"))
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+            }
+
+            val pDesc = TextView(this).apply {
+                text = "${preset.defaultPolicy.getSummary()} • ${preset.steps.joinToString(" ➔ ") { it.name }}"
+                setTextColor(Color.GRAY)
+                textSize = 11f
+                setPadding(0, 4, 0, 8)
+            }
+
+            card.addView(pTitle)
+            card.addView(pDesc)
+
+            card.setOnClickListener {
+                coordinator.startPreset(preset, preset.defaultPolicy)
+                dialogView?.let { windowManager.removeView(it) }
+            }
+
+            presetListContainer.addView(card)
+        }
+
+        // Custom Manual Goal Input Option
+        val customInputLabel = TextView(this).apply {
+            text = "Or enter a custom single goal:"
+            setTextColor(Color.LTGRAY)
+            textSize = 12f
+            setPadding(0, 12, 0, 6)
         }
 
         val input = EditText(this).apply {
-            hint = "e.g., finish this level in Subway Surfers"
+            hint = "e.g., finish this mission, survive 5 minutes..."
             setHintTextColor(Color.GRAY)
             setTextColor(Color.WHITE)
             setText(coordinator.activeObjective.ifEmpty { "finish this level" })
         }
 
-        val presetGroup = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        val presets = listOf(
-            "finish this level",
-            "finish this mission",
-            "defeat current boss",
-            "claim daily quest rewards"
-        )
-
-        for (preset in presets) {
-            val btn = Button(this).apply {
-                text = preset
-                textSize = 12f
-                setTextColor(Color.LTGRAY)
-                setBackgroundColor(Color.parseColor("#2A2A2A"))
-                setOnClickListener { input.setText(preset) }
-            }
-            presetGroup.addView(btn)
-        }
-
         val buttonRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
+            setPadding(0, 16, 0, 0)
         }
 
-        var dialogView: View? = null
-
         val cancelBtn = Button(this).apply {
-            text = "Cancel"
+            text = "Close"
             setTextColor(Color.GRAY)
             setBackgroundColor(Color.TRANSPARENT)
             setOnClickListener {
@@ -282,8 +390,8 @@ class FloatingOverlayService : Service(), AgentStateListener {
             }
         }
 
-        val confirmBtn = Button(this).apply {
-            text = "Start Autopilot"
+        val customRunBtn = Button(this).apply {
+            text = "Run Custom"
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#00C853"))
             setOnClickListener {
@@ -296,26 +404,58 @@ class FloatingOverlayService : Service(), AgentStateListener {
         }
 
         buttonRow.addView(cancelBtn)
-        buttonRow.addView(confirmBtn)
+        buttonRow.addView(customRunBtn)
 
         dialogContainer.addView(title)
+        dialogContainer.addView(presetListContainer)
+        dialogContainer.addView(customInputLabel)
         dialogContainer.addView(input)
-        dialogContainer.addView(TextView(this).apply {
-            text = "Quick Presets:"
-            setTextColor(Color.GRAY)
-            setPadding(0, 16, 0, 8)
-        })
-        dialogContainer.addView(presetGroup)
         dialogContainer.addView(buttonRow)
 
         dialogView = dialogContainer
-        windowManager.addView(dialogContainer, params)
+        try {
+            windowManager.addView(dialogContainer, params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed showing preset dialog", e)
+        }
     }
 
     override fun onStateChanged(state: AgentState, message: String) {
-        if (state == AgentState.OBJECTIVE_COMPLETED || state == AgentState.STOPPED) {
-            activeRect = null
-            hudOverlayView?.postInvalidate()
+        mainHandler.post {
+            when (state) {
+                AgentState.OBJECTIVE_COMPLETED -> {
+                    activeRect = null
+                    hudOverlayView?.postInvalidate()
+                    statusTextView?.text = "🎉 Done! ($message)"
+                }
+                AgentState.STOPPED -> {
+                    activeRect = null
+                    hudOverlayView?.postInvalidate()
+                    statusTextView?.text = "Stopped"
+                }
+                AgentState.PAUSED_TIMEOUT -> {
+                    statusTextView?.text = "⚠️ TIMED OUT (Paused)"
+                }
+                AgentState.EXECUTING -> {
+                    // Retain step counter title
+                }
+                else -> {}
+            }
+        }
+    }
+
+    override fun onSequenceProgress(
+        cycle: Int,
+        totalCycles: Int?,
+        stepIndex: Int,
+        totalSteps: Int,
+        stepName: String,
+        statusText: String
+    ) {
+        mainHandler.post {
+            val cycleStr = if (totalCycles != null) "C$cycle/$totalCycles" else "C$cycle"
+            val text = "[$cycleStr] ${stepIndex + 1}/$totalSteps: $stepName"
+            statusTextView?.text = text
         }
     }
 
@@ -334,7 +474,11 @@ class FloatingOverlayService : Service(), AgentStateListener {
     override fun onDestroy() {
         super.onDestroy()
         coordinator.setListener(null)
-        bubbleView?.let { windowManager.removeView(it) }
-        hudOverlayView?.let { windowManager.removeView(it) }
+        try {
+            bubbleView?.let { windowManager.removeView(it) }
+        } catch (e: Exception) {}
+        try {
+            hudOverlayView?.let { windowManager.removeView(it) }
+        } catch (e: Exception) {}
     }
 }

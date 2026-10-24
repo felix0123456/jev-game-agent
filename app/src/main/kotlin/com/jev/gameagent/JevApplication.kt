@@ -33,6 +33,7 @@ class JevApplication : Application() {
     }
 
     lateinit var jevApiClient: JevApiClient
+    lateinit var presetRepository: com.jev.gameagent.preset.PresetRepository
     lateinit var coordinator: AgentCoordinator
 
     override fun onCreate() {
@@ -41,6 +42,7 @@ class JevApplication : Application() {
 
         setupCrashHandler()
 
+        presetRepository = com.jev.gameagent.preset.PresetRepository(this)
         jevApiClient = JevApiClient(this)
         coordinator = AgentCoordinator(this, jevApiClient)
 

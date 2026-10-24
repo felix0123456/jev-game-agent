@@ -32,6 +32,7 @@ class ScreenCaptureService : Service() {
 
         const val ACTION_START = "com.jev.gameagent.START_CAPTURE"
         const val ACTION_STOP = "com.jev.gameagent.STOP_CAPTURE"
+        const val ACTION_STOP_ALL = "com.jev.gameagent.STOP_ALL"
         const val EXTRA_RESULT_CODE = "extra_result_code"
         const val EXTRA_RESULT_DATA = "extra_result_data"
 
@@ -56,6 +57,19 @@ class ScreenCaptureService : Service() {
                 action = ACTION_STOP
             }
             context.startService(intent)
+        }
+
+        fun stopAll(context: Context) {
+            val intent = Intent(context, ScreenCaptureService::class.java).apply {
+                action = ACTION_STOP_ALL
+            }
+            context.startService(intent)
+            try {
+                com.jev.gameagent.overlay.FloatingOverlayService.stop(context)
+                JevApplication.instance.coordinator.stopObjective("User stopped all services")
+            } catch (e: Exception) {
+                Log.w(TAG, "Error stopping overlay or coordinator", e)
+            }
         }
     }
 
@@ -93,23 +107,42 @@ class ScreenCaptureService : Service() {
                     stopSelf()
                 }
             }
-            ACTION_STOP -> {
+            ACTION_STOP, ACTION_STOP_ALL -> {
+                isRunning = false
                 stopCapture()
                 stopSelf()
+                if (intent?.action == ACTION_STOP_ALL) {
+                    com.jev.gameagent.overlay.FloatingOverlayService.stop(this)
+                }
             }
         }
         return START_NOT_STICKY
     }
 
     private fun startForegroundNotification() {
+        val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = ACTION_STOP_ALL
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        } else {
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val stopPendingIntent = android.app.PendingIntent.getService(this, 1099, stopIntent, flags)
+
         val notification: Notification = NotificationCompat.Builder(
             this,
             JevApplication.CHANNEL_ID_MEDIA_PROJECTION
         )
-            .setContentTitle("Jev Screen Vision Active")
-            .setContentText("Observing screen to complete gaming objective...")
+            .setContentTitle("⚡ Jev Game Autopilot Active")
+            .setContentText("Observing screen for active gaming goals")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "🛑 Stop HUD & Perception",
+                stopPendingIntent
+            )
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

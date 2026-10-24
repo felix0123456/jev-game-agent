@@ -2,10 +2,18 @@ package com.jev.gameagent.core
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import com.jev.gameagent.input.AccessibilityTouchService
 import com.jev.gameagent.input.SwipeDirection
 import com.jev.gameagent.jev.*
+import com.jev.gameagent.preset.ExecutionPolicy
+import com.jev.gameagent.preset.GoalPreset
+import com.jev.gameagent.preset.GoalStep
+import com.jev.gameagent.preset.PolicyType
 import com.jev.gameagent.vision.FrameCompressor
 import kotlinx.coroutines.*
 import java.util.Locale
@@ -16,6 +24,7 @@ enum class AgentState {
     OBSERVING,
     DECIDING,
     EXECUTING,
+    PAUSED_TIMEOUT,
     OBJECTIVE_COMPLETED,
     STOPPED
 }
@@ -28,6 +37,14 @@ interface AgentStateListener {
         confidence: Float,
         latencyMs: Long
     )
+    fun onSequenceProgress(
+        cycle: Int,
+        totalCycles: Int?,
+        stepIndex: Int,
+        totalSteps: Int,
+        stepName: String,
+        statusText: String
+    ) {}
 }
 
 class AgentCoordinator(
@@ -52,6 +69,26 @@ class AgentCoordinator(
     var currentState: AgentState = AgentState.IDLE
         private set
 
+    // Sequential Goal Preset Execution State
+    var activePreset: GoalPreset? = null
+        private set
+
+    var activePolicy: ExecutionPolicy = ExecutionPolicy()
+        private set
+
+    var currentCycle: Int = 1
+        private set
+
+    var currentStepIndex: Int = 0
+        private set
+
+    var stepStartTimeMs: Long = 0L
+        private set
+
+    var sessionStartTimeMs: Long = 0L
+        private set
+
+    private var isWaitingCycleDelay: Boolean = false
     private var stateListener: AgentStateListener? = null
     private val isProcessingFrame = AtomicBoolean(false)
     private var lastInferenceTimeMs = 0L
@@ -60,24 +97,162 @@ class AgentCoordinator(
         this.stateListener = listener
     }
 
+    // Launch standalone single goal
     fun startObjective(objective: String) {
-        activeObjective = objective
-        parsedObjective = ObjectiveParser.parse(objective)
+        val singleStep = GoalStep(name = "Goal", prompt = objective)
+        val tempPreset = GoalPreset(
+            id = "standalone",
+            name = "Manual Goal",
+            steps = listOf(singleStep),
+            defaultPolicy = ExecutionPolicy(PolicyType.RUN_ONCE)
+        )
+        startPreset(tempPreset, ExecutionPolicy(PolicyType.RUN_ONCE))
+    }
+
+    // Launch structured sequence with repetition or timer policy
+    fun startPreset(preset: GoalPreset, policy: ExecutionPolicy = preset.defaultPolicy) {
+        activePreset = preset
+        activePolicy = policy
+        currentCycle = 1
+        currentStepIndex = 0
+        sessionStartTimeMs = System.currentTimeMillis()
+        isWaitingCycleDelay = false
         safetyManager.reset()
-        updateState(AgentState.OBSERVING, "Observing screen for objective: $objective")
-        Log.i(TAG, "Starting objective: $objective (Parsed: $parsedObjective)")
+
+        Log.i(TAG, "Starting preset '${preset.name}' with policy ${policy.getSummary()} (${preset.steps.size} steps)")
+        activateCurrentStep()
+    }
+
+    private fun activateCurrentStep() {
+        val preset = activePreset ?: return
+        if (preset.steps.isEmpty()) {
+            stopObjective("Preset has no steps")
+            return
+        }
+
+        val step = preset.steps.getOrNull(currentStepIndex) ?: return
+        activeObjective = step.prompt
+        parsedObjective = ObjectiveParser.parse(step.prompt)
+        stepStartTimeMs = System.currentTimeMillis()
+        isWaitingCycleDelay = false
+
+        val totalCycles = if (activePolicy.type == PolicyType.REPEAT_COUNT) activePolicy.count else null
+        val progressMsg = "Cycle $currentCycle${if (totalCycles != null) "/$totalCycles" else ""} • Step ${currentStepIndex + 1}/${preset.steps.size}: ${step.name}"
+
+        updateState(AgentState.OBSERVING, progressMsg)
+        notifySequenceProgress(step.name, progressMsg)
+        Log.i(TAG, "Activated step: $progressMsg (Prompt: '${step.prompt}')")
+    }
+
+    fun nextStep() {
+        val preset = activePreset ?: return
+        if (currentStepIndex + 1 < preset.steps.size) {
+            currentStepIndex++
+            triggerHaptic(short = true)
+            activateCurrentStep()
+        } else {
+            onCycleCompleted()
+        }
+    }
+
+    fun skipStep() {
+        Log.i(TAG, "User skipped current step")
+        nextStep()
+    }
+
+    fun prevStep() {
+        val preset = activePreset ?: return
+        if (currentStepIndex > 0) {
+            currentStepIndex--
+            activateCurrentStep()
+        }
+    }
+
+    fun resumeFromPause() {
+        if (currentState == AgentState.PAUSED_TIMEOUT) {
+            stepStartTimeMs = System.currentTimeMillis() // Reset timeout timer
+            activateCurrentStep()
+        }
+    }
+
+    private fun onCycleCompleted() {
+        triggerHaptic(short = true)
+        val preset = activePreset ?: return
+
+        when (activePolicy.type) {
+            PolicyType.RUN_ONCE -> {
+                completeWholeSequence("All goals successfully reached!")
+            }
+            PolicyType.REPEAT_COUNT -> {
+                if (currentCycle >= activePolicy.count) {
+                    completeWholeSequence("Completed all ${activePolicy.count} cycles!")
+                } else {
+                    currentCycle++
+                    currentStepIndex = 0
+                    scheduleNextCycle(preset.cycleDelaySeconds)
+                }
+            }
+            PolicyType.DURATION_MINUTES -> {
+                val elapsedMinutes = (System.currentTimeMillis() - sessionStartTimeMs) / (60 * 1000L)
+                if (elapsedMinutes >= activePolicy.durationMinutes) {
+                    completeWholeSequence("Duration limit reached (${activePolicy.durationMinutes} min, $currentCycle cycles completed)!")
+                } else {
+                    currentCycle++
+                    currentStepIndex = 0
+                    scheduleNextCycle(preset.cycleDelaySeconds)
+                }
+            }
+        }
+    }
+
+    private fun scheduleNextCycle(delaySeconds: Int) {
+        isWaitingCycleDelay = true
+        val delayMs = (delaySeconds.coerceAtLeast(1)) * 1000L
+        val msg = "Cycle finished! Next cycle in ${delaySeconds}s..."
+        updateState(AgentState.OBSERVING, msg)
+        notifySequenceProgress("Preparing Next Cycle", msg)
+
+        scope.launch {
+            delay(delayMs)
+            if (currentState != AgentState.STOPPED && isWaitingCycleDelay) {
+                activateCurrentStep()
+            }
+        }
+    }
+
+    private fun completeWholeSequence(summary: String) {
+        triggerHaptic(short = false) // Triple celebration vibration
+        updateState(AgentState.OBJECTIVE_COMPLETED, summary)
+        notifySequenceProgress("Completed", summary)
+        Log.i(TAG, "Sequence completed: $summary")
     }
 
     fun stopObjective(reason: String) {
         updateState(AgentState.STOPPED, reason)
         safetyManager.triggerEmergencyStop(reason)
+        notifySequenceProgress("Stopped", reason)
         Log.i(TAG, "Objective stopped: $reason")
+    }
+
+    private fun notifySequenceProgress(stepName: String, statusText: String) {
+        val totalSteps = activePreset?.steps?.size ?: 1
+        val totalCycles = if (activePolicy.type == PolicyType.REPEAT_COUNT) activePolicy.count else null
+        stateListener?.onSequenceProgress(
+            cycle = currentCycle,
+            totalCycles = totalCycles,
+            stepIndex = currentStepIndex,
+            totalSteps = totalSteps,
+            stepName = stepName,
+            statusText = statusText
+        )
     }
 
     fun onNewScreenFrame(bitmap: Bitmap, screenWidth: Int, screenHeight: Int) {
         if (currentState == AgentState.IDLE ||
             currentState == AgentState.STOPPED ||
-            currentState == AgentState.OBJECTIVE_COMPLETED
+            currentState == AgentState.OBJECTIVE_COMPLETED ||
+            currentState == AgentState.PAUSED_TIMEOUT ||
+            isWaitingCycleDelay
         ) {
             return
         }
@@ -88,6 +263,30 @@ class AgentCoordinator(
         }
 
         val now = System.currentTimeMillis()
+
+        // 1. Check Duration Policy limit
+        if (activePolicy.type == PolicyType.DURATION_MINUTES) {
+            val elapsedMinutes = (now - sessionStartTimeMs) / (60 * 1000L)
+            if (elapsedMinutes >= activePolicy.durationMinutes) {
+                completeWholeSequence("Duration limit of ${activePolicy.durationMinutes} min completed ($currentCycle cycles).")
+                return
+            }
+        }
+
+        // 2. Check Step Timeout
+        val activeStep = activePreset?.steps?.getOrNull(currentStepIndex)
+        if (activeStep != null && activeStep.timeoutSeconds > 0) {
+            val stepElapsedSec = (now - stepStartTimeMs) / 1000L
+            if (stepElapsedSec > activeStep.timeoutSeconds) {
+                triggerHaptic(short = true)
+                val timeoutMsg = "Step '${activeStep.name}' timed out after ${activeStep.timeoutSeconds}s. Paused."
+                updateState(AgentState.PAUSED_TIMEOUT, timeoutMsg)
+                notifySequenceProgress(activeStep.name, timeoutMsg)
+                Log.w(TAG, timeoutMsg)
+                return
+            }
+        }
+
         if (now - lastInferenceTimeMs < MIN_FRAME_INTERVAL_MS) {
             return
         }
@@ -191,8 +390,10 @@ class AgentCoordinator(
         // 1. Check completion
         val completionAnswer = answers["objective_fulfilled"]
         if (completionAnswer?.value == true && (completionAnswer.probability ?: 0f) >= 0.85f) {
-            updateState(AgentState.OBJECTIVE_COMPLETED, "Objective '$activeObjective' accomplished!")
+            val step = activePreset?.steps?.getOrNull(currentStepIndex)
+            Log.i(TAG, "Step completed: '${step?.name ?: activeObjective}'!")
             stateListener?.onDecisionFeedback("COMPLETED", null, completionAnswer.probability ?: 1f, latencyMs)
+            nextStep()
             return
         }
 
@@ -245,5 +446,32 @@ class AgentCoordinator(
     private fun updateState(newState: AgentState, message: String) {
         currentState = newState
         stateListener?.onStateChanged(newState, message)
+    }
+
+    private fun triggerHaptic(short: Boolean) {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vibratorManager?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (short) {
+                    vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    // Triple pulse for whole sequence completion
+                    val timings = longArrayOf(0, 150, 100, 150, 100, 250)
+                    vibrator?.vibrate(VibrationEffect.createWaveform(timings, -1))
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(if (short) 100 else 400)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not trigger haptic feedback", e)
+        }
     }
 }
