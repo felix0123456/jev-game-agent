@@ -85,6 +85,7 @@ class OpenJevEngine:
                 text = data["candidates"][0]["content"]["parts"][0]["text"]
                 return self._parse_and_format_answers(text, questions)
             else:
+                print(f"[OpenJEV] Gemini API error ({resp.status_code}): {resp.text}")
                 return self._decide_local_heuristic(objective, image_b64, questions, width, height)
 
     async def _decide_openai(self, objective: str, image_b64: Optional[str], questions: Dict[str, Any], width: int, height: int) -> Dict[str, Any]:
@@ -158,6 +159,14 @@ class OpenJevEngine:
 
             if q_type == "box":
                 coords = item.get("box", [0.4, 0.4, 0.6, 0.6])
+                try:
+                    coords = [float(c) for c in coords]
+                    if any(c > 1.0 for c in coords):
+                        coords = [c / 1000.0 for c in coords]
+                    coords = [max(0.0, min(1.0, c)) for c in coords]
+                except Exception:
+                    coords = [0.4, 0.4, 0.6, 0.6]
+
                 formatted[q_name] = {
                     "type": "box",
                     "box": coords,

@@ -320,39 +320,39 @@ class AgentCoordinator(
                 type = "choice",
                 instructions = "What is the current screen status?",
                 criteria = mapOf(
-                    "in_progress" to "active gameplay is running",
-                    "level_complete" to "victory, stage cleared, win, reward popup",
-                    "game_over" to "defeat, you died, fail, retry screen",
-                    "menu" to "main menu, stage selection, pause menu, loading screen"
+                    "in_progress" to "gameplay or menu interaction is active",
+                    "level_complete" to "victory, stage cleared, rewards popup ready to claim",
+                    "game_over" to "defeat, fail, retry screen",
+                    "menu" to "main menu, stage selection, shop, dialog popup, settings"
                 )
             ),
             "action_type" to QuestionSpec(
                 type = "choice",
-                instructions = "What immediate action should be performed to advance the objective?",
+                instructions = "What immediate action should be performed to advance the objective: '$activeObjective'?",
                 criteria = mapOf(
-                    "tap_target" to "tap a specific button, enemy, powerup, or control",
-                    "swipe_lane" to "swipe to dodge, move, jump, or turn",
-                    "wait" to "no action required right now"
+                    "tap_target" to "tap the specific button, tab, claim button, confirm, dialog option, or close button",
+                    "swipe" to "scroll list or swipe tabs to reveal next items, buttons, or pages",
+                    "wait" to "wait for loading, reward animation, or screen transition"
                 )
             ),
             "target_box" to QuestionSpec(
                 type = "box",
-                instructions = "Precise bounding box of the element to interact with or tap"
+                instructions = "Precise bounding box [ymin, xmin, ymax, xmax] of the button, tab, or element to tap/interact with"
             ),
             "swipe_direction" to QuestionSpec(
                 type = "choice",
-                instructions = "If swipe is needed, which direction?",
+                instructions = "If swipe/scroll is needed, which direction?",
                 criteria = mapOf(
-                    "up" to "swipe up",
-                    "down" to "swipe down",
-                    "left" to "swipe left",
-                    "right" to "swipe right",
-                    "none" to "no swipe"
+                    "up" to "scroll down / swipe up to see more items below",
+                    "down" to "scroll up / swipe down to see items above",
+                    "left" to "swipe left to see next tab or page to the right",
+                    "right" to "swipe right to see previous tab or page to the left",
+                    "none" to "no swipe needed"
                 )
             ),
             "objective_fulfilled" to QuestionSpec(
                 type = "noul",
-                instructions = "Has the user's objective ($activeObjective) been successfully completed?"
+                instructions = "Has the current step objective ('$activeObjective') been successfully completed?"
             )
         )
 
@@ -399,7 +399,8 @@ class AgentCoordinator(
 
         // 2. Game Status check
         val gameStatus = answers["game_status"]?.choice ?: "in_progress"
-        val actionType = answers["action_type"]?.choice ?: "wait"
+        val rawAction = answers["action_type"]?.choice ?: "wait"
+        val actionType = if (rawAction == "swipe_lane") "swipe" else rawAction
         val targetBoxAnswer = answers["target_box"]
         val targetBox = targetBoxAnswer?.toScreenCoordinates(screenWidth, screenHeight)
         val confidence = answers["action_type"]?.confidence ?: 0.5f
@@ -424,7 +425,7 @@ class AgentCoordinator(
                     touchService.tap(targetBox.centerX, targetBox.centerY)
                 }
             }
-            "swipe_lane" -> {
+            "swipe" -> {
                 val dir = answers["swipe_direction"]?.choice?.lowercase(Locale.ROOT)
                 val directionEnum = when (dir) {
                     "up" -> SwipeDirection.UP
@@ -434,7 +435,12 @@ class AgentCoordinator(
                     else -> null
                 }
                 if (directionEnum != null) {
-                    touchService.swipeDirection(directionEnum, screenWidth, screenHeight)
+                    // If targetBox is a sizable scroll container, scroll inside it; otherwise scroll whole screen
+                    if (targetBox != null && (targetBox.right - targetBox.left) > 150 && (targetBox.bottom - targetBox.top) > 150) {
+                        touchService.swipeArea(directionEnum, targetBox)
+                    } else {
+                        touchService.swipeDirection(directionEnum, screenWidth, screenHeight)
+                    }
                 }
             }
             "wait" -> {

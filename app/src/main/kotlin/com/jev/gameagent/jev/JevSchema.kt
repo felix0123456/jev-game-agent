@@ -45,18 +45,37 @@ data class JevAnswer(
         val coords = boxCoordinates ?: return null
         if (coords.size < 4) return null
 
-        val ymin = coords[0] * screenHeight
-        val xmin = coords[1] * screenWidth
-        val ymax = coords[2] * screenHeight
-        val xmax = coords[3] * screenWidth
+        var ymin = coords[0]
+        var xmin = coords[1]
+        var ymax = coords[2]
+        var xmax = coords[3]
+
+        // Handle 0..1000 scale if returned by vision model
+        if (ymin > 1.0f || xmin > 1.0f || ymax > 1.0f || xmax > 1.0f) {
+            ymin /= 1000f
+            xmin /= 1000f
+            ymax /= 1000f
+            xmax /= 1000f
+        }
+
+        // Clamp safely to screen bounds [0.0, 1.0]
+        ymin = ymin.coerceIn(0f, 1f)
+        xmin = xmin.coerceIn(0f, 1f)
+        ymax = ymax.coerceIn(0f, 1f)
+        xmax = xmax.coerceIn(0f, 1f)
+
+        val top = ymin * screenHeight
+        val left = xmin * screenWidth
+        val bottom = ymax * screenHeight
+        val right = xmax * screenWidth
 
         return ScreenRect(
-            left = xmin,
-            top = ymin,
-            right = xmax,
-            bottom = ymax,
-            centerX = (xmin + xmax) / 2f,
-            centerY = (ymin + ymax) / 2f
+            left = left,
+            top = top,
+            right = right,
+            bottom = bottom,
+            centerX = (left + right) / 2f,
+            centerY = (top + bottom) / 2f
         )
     }
 }

@@ -46,13 +46,10 @@ class AccessibilityTouchService : AccessibilityService(), InputDispatcher {
     override fun tap(x: Float, y: Float, durationMs: Long, callback: ((Boolean) -> Unit)?) {
         val path = Path().apply {
             moveTo(x, y)
+            lineTo(x, y)
         }
-        // Add subtle human-like touch jitter (+/- 2 pixels)
-        val jitterX = x + (Random.nextFloat() * 4f - 2f)
-        val jitterY = y + (Random.nextFloat() * 4f - 2f)
-        path.lineTo(jitterX, jitterY)
 
-        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(40))
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceIn(50, 100))
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
         dispatchGesture(gesture, object : GestureResultCallback() {
@@ -78,13 +75,10 @@ class AccessibilityTouchService : AccessibilityService(), InputDispatcher {
     ) {
         val path = Path().apply {
             moveTo(startX, startY)
-            // Add a gentle curved arc to imitate human thumb motion
-            val midX = (startX + endX) / 2f + (Random.nextFloat() * 10f - 5f)
-            val midY = (startY + endY) / 2f + (Random.nextFloat() * 10f - 5f)
-            quadTo(midX, midY, endX, endY)
+            lineTo(endX, endY)
         }
 
-        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(100))
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(120))
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
         dispatchGesture(gesture, object : GestureResultCallback() {
@@ -110,13 +104,35 @@ class AccessibilityTouchService : AccessibilityService(), InputDispatcher {
         val centerX = screenWidth / 2f
         val centerY = screenHeight / 2f
         val distanceX = screenWidth * 0.35f
-        val distanceY = screenHeight * 0.25f
+        val distanceY = screenHeight * 0.28f
 
         val (startX, startY, endX, endY) = when (direction) {
             SwipeDirection.UP -> listOf(centerX, centerY + distanceY, centerX, centerY - distanceY)
             SwipeDirection.DOWN -> listOf(centerX, centerY - distanceY, centerX, centerY + distanceY)
             SwipeDirection.LEFT -> listOf(centerX + distanceX, centerY, centerX - distanceX, centerY)
             SwipeDirection.RIGHT -> listOf(centerX - distanceX, centerY, centerX + distanceX, centerY)
+        }
+
+        swipe(startX, startY, endX, endY, durationMs, callback)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    override fun swipeArea(
+        direction: SwipeDirection,
+        area: com.jev.gameagent.jev.ScreenRect,
+        durationMs: Long,
+        callback: ((Boolean) -> Unit)?
+    ) {
+        val centerX = area.centerX
+        val centerY = area.centerY
+        val spanX = (area.right - area.left).coerceAtLeast(100f) * 0.35f
+        val spanY = (area.bottom - area.top).coerceAtLeast(100f) * 0.35f
+
+        val (startX, startY, endX, endY) = when (direction) {
+            SwipeDirection.UP -> listOf(centerX, centerY + spanY, centerX, centerY - spanY)
+            SwipeDirection.DOWN -> listOf(centerX, centerY - spanY, centerX, centerY + spanY)
+            SwipeDirection.LEFT -> listOf(centerX + spanX, centerY, centerX - spanX, centerY)
+            SwipeDirection.RIGHT -> listOf(centerX - spanX, centerY, centerX + spanX, centerY)
         }
 
         swipe(startX, startY, endX, endY, durationMs, callback)

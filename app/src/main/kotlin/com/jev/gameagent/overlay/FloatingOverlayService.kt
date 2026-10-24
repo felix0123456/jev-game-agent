@@ -42,6 +42,7 @@ class FloatingOverlayService : Service(), AgentStateListener {
     private var bubbleView: View? = null
     private var hudOverlayView: View? = null
     private var activeRect: ScreenRect? = null
+    private var activeAction: String = ""
     private var activeConfidence: Float = 0f
     private var activeLatencyMs: Long = 0L
 
@@ -268,7 +269,8 @@ class FloatingOverlayService : Service(), AgentStateListener {
                 super.onDraw(canvas)
                 activeRect?.let { rect ->
                     canvas.drawRect(rect.left, rect.top, rect.right, rect.bottom, boxPaint)
-                    val label = "Jev: %.0f%% (%d ms)".format(activeConfidence * 100f, activeLatencyMs)
+                    val actionLabel = if (activeAction.isNotBlank()) " [${activeAction.uppercase()}]" else ""
+                    val label = "⚡ Jev$actionLabel: %.0f%% (%d ms)".format(activeConfidence * 100f, activeLatencyMs)
                     canvas.drawText(label, rect.left, (rect.top - 12f).coerceAtLeast(40f), textPaint)
                 }
             }
@@ -465,6 +467,7 @@ class FloatingOverlayService : Service(), AgentStateListener {
         confidence: Float,
         latencyMs: Long
     ) {
+        activeAction = actionType
         activeRect = targetBox
         activeConfidence = confidence
         activeLatencyMs = latencyMs

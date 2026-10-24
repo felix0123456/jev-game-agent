@@ -31,7 +31,17 @@ interface InputDispatcher {
         direction: SwipeDirection,
         screenWidth: Int,
         screenHeight: Int,
-        durationMs: Long = 250,
+        durationMs: Long = 280,
+        callback: ((Boolean) -> Unit)? = null
+    )
+
+    /**
+     * Dispatches a directional swipe localized inside a specific screen rectangle or list container.
+     */
+    fun swipeArea(
+        direction: SwipeDirection,
+        area: com.jev.gameagent.jev.ScreenRect,
+        durationMs: Long = 280,
         callback: ((Boolean) -> Unit)? = null
     )
 
